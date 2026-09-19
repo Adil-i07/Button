@@ -1,4 +1,5 @@
 // Minimalist Web Audio & Web Speech Synthesizer
+// Bulletproof for iframes, sandboxed browsers, and mobile devices
 
 class AudioManager {
   private ctx: AudioContext | null = null;
@@ -6,35 +7,50 @@ class AudioManager {
   private voiceEnabled: boolean = true;
   private voicesLoaded: boolean = false;
   private availableVoices: SpeechSynthesisVoice[] = [];
+  private voicesInitAttempted: boolean = false;
 
   constructor() {
-    if (typeof window !== 'undefined') {
-      this.initVoices();
-    }
+    // Delay voice and audio context initialization to avoid iframe security blocks at startup
   }
 
   private initContext() {
-    if (!this.ctx && typeof window !== 'undefined') {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioCtx) {
-        this.ctx = new AudioCtx();
+    if (typeof window === 'undefined') return;
+    try {
+      if (!this.ctx) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          this.ctx = new AudioCtx();
+        }
       }
-    }
-    if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
+    } catch (e) {
+      // Ignore audio policy restriction
     }
   }
 
   private initVoices() {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const load = () => {
-        this.availableVoices = window.speechSynthesis.getVoices();
-        this.voicesLoaded = true;
-      };
-      load();
-      if (window.speechSynthesis.onvoiceschanged !== undefined) {
-        window.speechSynthesis.onvoiceschanged = load;
+    if (this.voicesInitAttempted || typeof window === 'undefined') return;
+    this.voicesInitAttempted = true;
+
+    try {
+      if ('speechSynthesis' in window && window.speechSynthesis) {
+        const load = () => {
+          try {
+            this.availableVoices = window.speechSynthesis.getVoices() || [];
+            this.voicesLoaded = true;
+          } catch (e) {}
+        };
+        load();
+        try {
+          if (window.speechSynthesis.onvoiceschanged !== undefined) {
+            window.speechSynthesis.onvoiceschanged = load;
+          }
+        } catch (e) {}
       }
+    } catch (e) {
+      // Speech synthesis blocked in iframe
     }
   }
 
@@ -135,12 +151,19 @@ class AudioManager {
 
   // Voice narration using Web Speech API
   public speak(text: string, langPreference: string = 'auto', onEnd?: () => void) {
-    if (!this.voiceEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) {
+    if (!this.voiceEnabled || typeof window === 'undefined') {
       onEnd?.();
       return;
     }
 
     try {
+      this.initVoices();
+
+      if (!('speechSynthesis' in window) || !window.speechSynthesis) {
+        onEnd?.();
+        return;
+      }
+
       window.speechSynthesis.cancel(); // Stop any pending speech
 
       const utterance = new SpeechSynthesisUtterance(text);
@@ -150,7 +173,7 @@ class AudioManager {
       if (langPreference === 'en') {
         targetLang = 'en-US';
       } else if (langPreference === 'auto') {
-        const deviceLang = navigator.language || 'th-TH';
+        const deviceLang = (typeof navigator !== 'undefined' && navigator.language) || 'th-TH';
         targetLang = deviceLang.startsWith('th') ? 'th-TH' : 'en-US';
       }
 
@@ -160,10 +183,12 @@ class AudioManager {
 
       // Pick matching voice
       if (this.availableVoices.length === 0) {
-        this.availableVoices = window.speechSynthesis.getVoices();
+        try {
+          this.availableVoices = window.speechSynthesis.getVoices() || [];
+        } catch (e) {}
       }
 
-      const match = this.availableVoices.find(v => v.lang.replace('_', '-').startsWith(targetLang.slice(0, 2)));
+      const match = this.availableVoices.find(v => v.lang && v.lang.replace('_', '-').startsWith(targetLang.slice(0, 2)));
       if (match) {
         utterance.voice = match;
       }
@@ -183,9 +208,11 @@ class AudioManager {
   }
 
   public stopSpeaking() {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
+    try {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    } catch (e) {}
   }
 }
 

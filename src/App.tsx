@@ -62,6 +62,30 @@ const INITIAL_STATS: GameStats = {
   unlockedAchievementsCount: 0,
 };
 
+// Helper for safe hash retrieval and setting inside iframes
+const getSafeHash = (): string => {
+  try {
+    if (typeof window !== 'undefined' && window.location && window.location.hash) {
+      return window.location.hash.replace('#', '').trim().toUpperCase();
+    }
+  } catch (e) {}
+  return '';
+};
+
+const setSafeHash = (code: string) => {
+  try {
+    if (typeof window !== 'undefined' && code) {
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, '', `#${code}`);
+      } else {
+        window.location.hash = `#${code}`;
+      }
+    }
+  } catch (e) {
+    // Silently ignore sandbox restriction
+  }
+};
+
 export default function App() {
   // Game State
   const [score, setScore] = useState<number>(0);
@@ -118,7 +142,7 @@ export default function App() {
   // Initialize Cloud Code and Load State
   useEffect(() => {
     let initialCode = '';
-    const hash = window.location.hash.replace('#', '').trim().toUpperCase();
+    const hash = getSafeHash();
 
     if (hash && hash.length >= 3) {
       initialCode = hash;
@@ -135,7 +159,7 @@ export default function App() {
       if (!initialCode) {
         initialCode = Math.floor(100000 + Math.random() * 900000).toString();
       }
-      window.location.hash = `#${initialCode}`;
+      setSafeHash(initialCode);
     }
 
     setCloudCode(initialCode);
@@ -147,7 +171,7 @@ export default function App() {
   // Update hash when cloudCode changes
   useEffect(() => {
     if (cloudCode) {
-      window.location.hash = `#${cloudCode}`;
+      setSafeHash(cloudCode);
     }
   }, [cloudCode]);
 
@@ -797,7 +821,7 @@ export default function App() {
   const handleGenerateNewCode = () => {
     const newCode = Math.floor(100000 + Math.random() * 900000).toString();
     setCloudCode(newCode);
-    window.location.hash = `#${newCode}`;
+    setSafeHash(newCode);
     scheduleCloudSync();
   };
 
